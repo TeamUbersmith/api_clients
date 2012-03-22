@@ -1,0 +1,7 @@
+{
+    "url": "https://billing.mycompany.com",
+    "username": "yourusername",
+    "api_token": "yourtoken",
+    "login": "yourlogin",
+    "pass": "yourpass"
+}
