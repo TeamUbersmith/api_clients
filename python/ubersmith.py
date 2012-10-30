@@ -73,12 +73,13 @@ class UbersmithClient(object):
         query = urllib.urlencode({'method': method_name})
         return '%s/api/2.0/?%s' % (self.base_url, query)
 
-    def _get_headers(self):
+    def _get_headers(self, headers=None):
         encoded_auth = base64.encodestring(
             '%s:%s' % (self.username, self.api_token))[:-1]
-        return {
-            'Authorization': 'Basic %s' % encoded_auth,
-            }
+        if headers is None:
+            headers = {}
+        headers['Authorization'] = 'Basic %s' % encoded_auth
+        return headers
 
     def __call__(self, method_name, **kwargs):
         """
@@ -89,11 +90,24 @@ class UbersmithClient(object):
         :param method_name: The ubersmith api method to invoke
 
         """
-        url = self._get_url_for_method(method_name)
-        headers = self._get_headers()
-        request = urllib2.Request(url, headers=headers)
         data = urllib.urlencode(kwargs)
-        response = urllib2.urlopen(request, data=data)
+        self.call_direct(method_name, data)
+
+    def call_direct(self, method_name, data, headers=None):
+        """
+        Calls the ubersmith api over http/s.  Parameters shoud be pre-encoded
+        and passed in data, which will be the body of the POST. Additional
+        headers may also be specified.
+
+        :param method_name: The ubersmith api method to invoke
+        :param data: Preencoded (via urlencode or multipart/form-data) POST data
+        :param headers: Optionally, additional headers to send
+
+        """
+        url = self._get_url_for_method(method_name)
+        _headers = self._get_headers(headers)
+        request = urllib2.Request(url, data, _headers)
+        response = urllib2.urlopen(request)
         result = json.load(response)
         if not result.get('status'):
             raise UbersmithError(result.get('error_code'),
