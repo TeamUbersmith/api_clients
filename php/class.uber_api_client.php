@@ -2,7 +2,7 @@
 
 class uber_api_client
 {
-	const VERSION = '1.0';
+	const VERSION = '1.2';
 	
 	protected $options = array(
 		'debug'       => false,
@@ -12,6 +12,10 @@ class uber_api_client
 		'useragent'   => 'Ubersmith API Client PHP/1.0',
 		'certificate' => null,
 		'certpass'    => null,
+		'json_req'    => false,
+		'format'      => '',
+		'orig_user'   => null,
+		'orig_ip'     => null,
 	);
 	
 	// value of the content type response header
@@ -24,18 +28,34 @@ class uber_api_client
 	protected $content_filename;
 	
 	
-	public function __construct($url,$username,$api_token)
+	public function __construct($url = null,$username = null,$api_token = null)
 	{
-		$this->options['userpwd'] = $username .':'. $api_token;
-		$this->options['server'] = $url;
+		if (isset($url)) {
+			$this->options['server'] = $url;
+		}
+		if (isset($username,$api_token)) {
+			$this->options['userpwd'] = $username .':'. $api_token;
+		}
 	}
 	
-	
+	/**
+	 * Set an option
+	 *
+	 * @param string $option option name
+	 * @param mixed $value value
+	 */
 	public function set_option($option,$value = null)
 	{
 		return $this->options[$option] = $value;
 	}
 	
+	/**
+	 * Get option(s)
+	 *
+	 * @param string $option
+	 * @param mixed $default value to return if option is not set
+	 * @return mixed
+	 */
 	public function get_option($option = null,$default = null)
 	{
 		if (!isset($option)) {
@@ -66,7 +86,6 @@ class uber_api_client
 		return $this->content_filename;
 	}
 	
-	
 	public function call($method = 'uber.method_list',$params = array())
 	{
 		// curl library is required
@@ -83,8 +102,29 @@ class uber_api_client
 		
 		$url = rtrim($this->options['server'],'/') .'/api/2.0/?method='. urlencode($method);
 		
-		if (is_array($params)) {
-			$params = http_build_query($params);
+		if ($this->get_option('format')) {
+			$url .= '&format='. urlencode($this->get_option('format'));
+		}
+		
+		// if we're using json request format
+		if ($this->get_option('json_req')) {
+			$headers[] = 'Content-type: application/json';
+			
+			if (is_array($params)) {
+				$params = json_encode($params);
+			}
+		// use regular post requests
+		} else {
+			if (is_array($params)) {
+				$params = $this->curl_postfields($params);
+			}
+		}
+		
+		if ($this->get_option('orig_user')) {
+			$headers[] = 'X-Ubersmith-Orig-User: '. $this->get_option('orig_user');
+		}
+		if ($this->get_option('orig_ip')) {
+			$headers[] = 'X-Ubersmith-Orig-IP: '. $this->get_option('orig_ip');
 		}
 		
 		$curl = curl_init($url);
@@ -92,14 +132,20 @@ class uber_api_client
 		$this->debug('URL:',$url);
 		$this->debug('Params:',$params);
 		curl_setopt($curl,CURLOPT_POSTFIELDS,    $params);
+		curl_setopt($curl,CURLOPT_FAILONERROR,   true);
 		curl_setopt($curl,CURLOPT_RETURNTRANSFER,1);
-		curl_setopt($curl,CURLOPT_USERAGENT,     $this->options['useragent']);
+		// user-agent & request headers
+		curl_setopt($curl,CURLOPT_USERAGENT,     $this->get_option('useragent'));
 		curl_setopt($curl,CURLOPT_HTTPHEADER,    $headers);
-		curl_setopt($curl,CURLOPT_TIMEOUT,       $this->options['timeout']);
+		// timeout
+		curl_setopt($curl,CURLOPT_TIMEOUT,       $this->get_option('timeout'));
+		// follow up to 2 redirects
+		curl_setopt($curl,CURLOPT_FOLLOWLOCATION,1);
+		curl_setopt($curl,CURLOPT_MAXREDIRS,     2);
 		curl_setopt($curl,CURLOPT_HEADERFUNCTION,array($this, 'read_header'));
 		
 		// set auth stuff
-		$userpwd = $this->options['userpwd'];
+		$userpwd = $this->get_option('userpwd');
 		if (!empty($userpwd)) {
 			curl_setopt($curl, CURLOPT_USERPWD, $userpwd);
 		}
@@ -112,18 +158,20 @@ class uber_api_client
 			}
 			
 			// ssl client certificate and password
-			$certificate = $this->options['certificate'];
+			$certificate = $this->get_option('certificate');
 			if (!empty($certificate)) {
 				curl_setopt($curl,CURLOPT_SSLCERT,$certificate);
 				
-				$certpass = $this->options['certpass'];
+				$certpass = $this->get_option('certpass');
 				if (!empty($certpass)) {
 					curl_setopt($curl,CURLOPT_SSLCERTPASSWD,$certpass);
 				}
 			}
 		}
 		
-		if (!$response = curl_exec($curl)) {
+		$response = curl_exec($curl);
+		
+		if ($response === false) {
 			$errnum = curl_errno($curl);
 			$errstr = curl_error($curl);
 			curl_close($curl);
@@ -161,7 +209,7 @@ class uber_api_client
 				}
 				
 				if (empty($result['status'])) {
-					return $this->raiseError($result['error_message'],$result['error_code']);
+					return $this->raiseMethodError($result['error_message'],$result['error_code']);
 				}
 				
 				return $result['data'];
@@ -188,28 +236,60 @@ class uber_api_client
 		}
 	}
 	
+	// flatten multi-dimensional params array
+	protected function curl_postfields($formdata,$numeric_prefix = '',$_parent = null)
+	{
+		$postdata = array();
+		
+		foreach ($formdata as $k => $v) {
+			if (!empty($_parent)) {
+				$k = $_parent .'['. $k .']';
+			} elseif (is_numeric($k)) {
+				$k = $numeric_prefix . $k;
+			}
+			if (is_array($v) || is_object($v)) {
+				$postdata = array_merge($postdata,$this->curl_postfields($v,$numeric_prefix,$k));
+			} else {
+				$postdata[$k] = $v;
+			}
+		}
+		
+		return $postdata;
+	}
+	
 	// reads all the response headers one by one from curl
 	protected function read_header($ch, $header)
 	{
+		$len = strlen($header);
+		
 		$pos = stripos($header,'filename=');
 		if ($pos !== FALSE) {
 			$this->content_filename = substr($header,$pos + 9);
 		}
 		
-		return strlen($header);
+		return $len;
 	}
 	
-	// throw an Exception if an error occurs
+	// throw an UberException if an error occurs
 	protected function raiseError($text,$code = 1)
 	{
 		// we can throw exceptions from the SPL as well
-		throw new Exception($text,$code);
+		throw new UberException($text,$code);
 	}
 	
-	// print debug messages
+	// throw an UberMethodException if a method status was false
+	protected function raiseMethodError($text,$code = 1)
+	{
+		// we can throw exceptions from the SPL as well
+		throw new UberMethodException($text,$code);
+	}
+	
+	/**
+	 * internal function for displaying debug information
+	 */
 	protected function debug($text,$info)
 	{
-		if ($this->options['debug']) {
+		if ($this->get_option('debug')) {
 			print $text ."\n\n";
 			print_r($info);
 			print "\n\n";
@@ -352,5 +432,11 @@ if (!function_exists('gzdecode')) {
 		return $data;
 	}
 }
+
+// a backend error occured (e.g. curl failed)
+class UberException extends Exception { }
+
+// the method call failed, i.e. status was false
+class UberMethodException extends Exception { }
 
 // end of script
