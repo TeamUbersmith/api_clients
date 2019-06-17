@@ -1,0 +1,26 @@
+{
+    "name": "TeamUbersmith/api_clients",
+    "description": "Ubersmith API 2.0 clients for various programming languages contributed by our users.",
+    "keywords": [],
+    "homepage": "https://github.com/TeamUbersmith/api_clients",
+    "authors": [
+        {
+            "name": "Shannon Weyrick",
+            "homepage": "https://github.com/weyrick",
+            "role": "Developer"
+        },
+        {
+            "name": "Luke Arduini",
+            "homepage": "https://github.com/luk-",
+            "role": "Developer"
+        },
+        {
+            "name": "Dan Cech",
+            "homepage": "https://github.com/DanCech",
+            "role": "Developer"
+        }
+    ],
+    "autoload": {
+        "classmap": ["php/class.uber_api_client.php"]
+    }
+}
